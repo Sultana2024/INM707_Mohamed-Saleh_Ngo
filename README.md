@@ -52,3 +52,5 @@ Mario saving Princess environment:
 5. Princess: 
 - position
 - ⁠if/else reached = terminal
+![image](https://github.com/user-attachments/assets/f7665b00-f675-4b36-8da2-0441e8e89eb4)
+

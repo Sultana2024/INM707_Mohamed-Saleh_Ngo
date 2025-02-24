@@ -27,3 +27,28 @@ c. Your (team and individual) code.
 9. Apply algorithm from RLLIB on Atari Environment
 10. Analysis of result
 11. Implement PPO or SAC
+
+----------------------------------------------------
+Meeting 14 Feb
+~~~~
+Mario saving Princess environment:
+1. Grid definition: 5x5. 
+- action space
+- ⁠states 
+- ⁠boundary wall (maybe under obstacle?)
+
+2. Agent: 
+- position
+- number of steps
+
+3. Ladder:
+- position 
+- ⁠if/else loop with picked up or not
+
+4. Dragons: 
+- position
+- ⁠if/else encountered by agent
+
+5. Princess: 
+- position
+- ⁠if/else reached = terminal

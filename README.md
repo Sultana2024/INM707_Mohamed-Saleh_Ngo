@@ -1,4 +1,6 @@
 # INM707_Mohamed-Saleh_Ngo
+Word document on Cloud: 
+https://cityuni-my.sharepoint.com/:w:/r/personal/thi_ngo_city_ac_uk/_layouts/15/Doc.aspx?sourcedoc=%7B82B351F5-A3B1-4ABA-A929-DBD932F442A9%7D&file=RESOURCES%20&%20NOTES.docx=&action=default&mobileredirect=true
 
 **Deliverables: **
 

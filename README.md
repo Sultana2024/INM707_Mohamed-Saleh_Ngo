@@ -5,11 +5,15 @@ https://cityuni-my.sharepoint.com/:w:/r/personal/thi_ngo_city_ac_uk/_layouts/15/
 **Deliverables: **
 
 1. Written Report
-a. All the tasks(up to 10pages)
-b. A summary of your contribution to the team tasks(1page)
+   
+a. All the tasks(up to 10 pages)
+
+b. A summary of your contribution to the team tasks(1 page)
+
 c. Your (team and individual) code.
-3. Your code as a zip file.You must also share a GitHub link and grant access to the lecturers.
-4. An Oral Presentation (15minutes).
+
+2. Your code as a zip file.You must also share a GitHub link and grant access to the lecturers.
+3. An Oral Presentation (15 minutes).
    
 **Basic Tasks: **
 1. Environment setup

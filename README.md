@@ -1,6 +1,5 @@
 # INM707_Mohamed-Saleh_Ngo
-Word document on Cloud: 
-https://cityuni-my.sharepoint.com/:w:/r/personal/thi_ngo_city_ac_uk/_layouts/15/Doc.aspx?sourcedoc=%7B82B351F5-A3B1-4ABA-A929-DBD932F442A9%7D&file=RESOURCES%20&%20NOTES.docx=&action=default&mobileredirect=true
+File Drive: https://cityuni-my.sharepoint.com/shared?login_hint=Sultana%2EMohamed%2DSaleh%40city%2Eac%2Euk&source=waffle&id=%2Fpersonal%2Fthi%5Fngo%5Fcity%5Fac%5Fuk%2FDocuments%2FDeep%20Learning%20Coursework&listurl=%2Fpersonal%2Fthi%5Fngo%5Fcity%5Fac%5Fuk%2FDocuments
 
 **Deliverables: **
 

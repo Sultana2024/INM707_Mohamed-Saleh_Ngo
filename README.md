@@ -1,61 +1,20 @@
 # INM707_Mohamed-Saleh_Ngo
-File Drive: https://cityuni-my.sharepoint.com/shared?login_hint=Sultana%2EMohamed%2DSaleh%40city%2Eac%2Euk&source=waffle&id=%2Fpersonal%2Fthi%5Fngo%5Fcity%5Fac%5Fuk%2FDocuments%2FDeep%20Learning%20Coursework&listurl=%2Fpersonal%2Fthi%5Fngo%5Fcity%5Fac%5Fuk%2FDocuments
 
-**Deliverables: **
+This is the repo for the INM707 Deep Reinforcement Learning Coursework. In this repo, we included the code in Python Jupyter Notebooks for tasks 1 to 8 (group tasks). 
 
-1. Written Report
-   
-a. All the tasks(up to 10 pages)
+* Requirements.txt contains the libraries version to install
 
-b. A summary of your contribution to the team tasks(1 page)
+  
+_____________________________________________________________________________________________________________________________________________________________________________________________
+**Basic Tasks**
 
-c. Your (team and individual) code.
+* Env_Q is the code for the environment and Q-learning experiments with different variables and policies.
+* Download and run this notebook for tasks 1 to 6 
 
-2. Your code as a zip file.You must also share a GitHub link and grant access to the lecturers.
-3. An Oral Presentation (15 minutes).
-   
-**Basic Tasks: **
-1. Environment setup
-2. State transition and reward function
-3. Q-learning parameters and policy
-4. Q-learning algorithm and performance
-5. Hyperparameter tuning
-6. Analysis of results
+**Advanced Tasks**
 
-**Advanced Tasks: **
+* **Double_DQN** – the code for the Double DQN implementation and both experiments for tasks 7 to 8
 
-7. Implement DQN with 2 improvements
-8. Analysis of results
+* **Duel_DQN** – the code for Dueling DQN implementation and both experiments for tasks 7 to 8
 
-**Individual Tasks: **
-
-9. Apply algorithm from RLLIB on Atari Environment
-10. Analysis of result
-11. Implement PPO or SAC
-
-----------------------------------------------------
-Meeting 14 Feb
-~~~~
-Mario saving Princess environment:
-1. Grid definition: 5x5. 
-- action space
-- ⁠states 
-- ⁠boundary wall (maybe under obstacle?)
-
-2. Agent: 
-- position
-- number of steps
-
-3. Ladder:
-- position 
-- ⁠if/else loop with picked up or not
-
-4. Dragons: 
-- position
-- ⁠if/else encountered by agent
-
-5. Princess: 
-- position
-- ⁠if/else reached = terminal
-![image](https://github.com/user-attachments/assets/f7665b00-f675-4b36-8da2-0441e8e89eb4)
-
+* The Text_file_codes folder contains the text file version of the codes. 

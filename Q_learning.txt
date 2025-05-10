@@ -1,0 +1,1751 @@
+
+
+    #Tasks:
+    #1. Environment definition
+    #2. State and Reward function
+    #3. Q-learning update rule and policy (epsilon greedy and softmax)
+    #4. Run and measure performance for multiple episodes, parameters
+    #observation_space = state space as the grid is a fully observable environment
+
+    # Uncomment to download latest gym version
+    #!pip install gym==0.26.2
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import torch
+    from torch import nn
+    import gym
+    from gym import Env, logger, spaces, utils
+    import random
+    from enum import Enum
+    import pandas as pd
+
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+
+    ##Environment
+
+    # The Warehouse is divided into a grid. Use these 'tiles' to represent the objects on the grid.
+    class GridTile(Enum):
+        _Floor = 0
+        Mario = 1
+        Ladder = 2
+        Weapon = 3
+        Dragon = 4
+        Princess = 5
+        Dragon2 = 6
+
+        # Return the first letter of tile nme
+        def __str__(self):
+            return self.name[:1]
+
+    class gridEnv(gym.Env):
+        def __init__(self, gridsize=(6, 6),
+                     princess_position=(5,5),
+                     dragon_position=(5,3),
+                     dragon2_position=(4,3),
+                     weapon_position=(4,5),
+                     ladder_position=(3,2)):
+
+            super(gridEnv, self).__init__()
+
+            # Grid size 6x6
+            self.gridsize = gridsize
+
+            # Position of goal: Princess Peach
+            self.princess_position = princess_position
+
+            # Position of obstacle: dragon
+            self.dragon_position = dragon_position
+
+            # Position of obstacle: dragon 2
+            self.dragon2_position = dragon2_position
+
+            # Position of weapon
+            self.weapon_position = weapon_position
+
+            # Position of tool: Ladder
+            self.ladder_position = ladder_position
+
+            # Define action space: up, down, left, right
+            self.action_space = spaces.Discrete(4)
+
+            # Define observation space (state space): 0...5 rows/columns
+            # Each position of the agent in the grid is a state
+            self.observation_space = spaces.Box(low=0, high=max(self.gridsize), shape=(2,))
+
+            # Define state where agent starts
+            self.state = np.array([0, 0])
+
+            # Initialise 6x6 grid where positions will be stored
+            self.grid = np.zeros(self.gridsize)
+
+            # Define ladder check
+            self.ladder_pickup = False
+
+            # Define weapon check
+            self.weapon_pickup = False
+
+            # Define if terminal state reached = learning episode ended
+            self.done = False
+            self.seed()
+
+        def seed(self, seed=None):
+            self.np_random, _ = gym.utils.seeding.np_random(seed)
+            return [seed]
+
+        def reset(self, seed=None):
+            if seed is not None:
+                self.seed(seed)
+
+            # Reset the Mario's position and the grid
+            self.state = np.array([0, 0])
+            self.done = False
+
+            # Reset the grid (zeros) and place the goal position
+            self.grid = np.zeros(self.gridsize)
+            # Store positions
+            self.grid[self.princess_position[0], self.princess_position[1]] = 2
+            self.grid[self.dragon_position[0], self.dragon_position[1]] = 3
+            self.grid[self.ladder_position[0], self.ladder_position[1]] = 4
+            self.grid[self.weapon_position[0], self.weapon_position[1]] = 5
+            self.grid[self.dragon2_position[0], self.dragon2_position[1]] = 6
+
+            self.ladder_pickup = False
+            self.weapon_pickup = False
+
+            return self.state
+
+
+        def step(self, action):
+            # Vi
+            # Track old state
+            old_state = self.state.copy()
+
+            # Sultana
+            # Move the agent based on the action: up, down, left, right
+            if action == 0:  # Move up
+                self.state[0] = max(0, self.state[0] - 1)
+            elif action == 1:  # Move down
+                self.state[0] = min(self.gridsize[0] - 1, self.state[0] + 1)
+            elif action == 2:  # Move left
+                self.state[1] = max(0, self.state[1] - 1)
+            elif action == 3:  # Move right
+                self.state[1] = min(self.gridsize[1] - 1, self.state[1] + 1)
+
+            # Compute reward and check if episode ends
+            reward, done = self.compute_reward(old_state)
+
+            return self.state, reward, done
+
+
+        def compute_reward(self, old_state):
+            # Default penalty for each step taken
+            reward = -1;
+            self.done = False
+
+            # Check if the agent reached the goal
+            if np.array_equal(self.state, self.princess_position):
+              if self.ladder_pickup == True:
+                reward = 30
+                self.done = True
+              else:
+                reward = 0
+                self.done = True
+
+            # Reward for picking up ladder
+            elif np.array_equal(self.state, self.ladder_position):
+              if self.ladder_pickup == False:
+                reward = 10
+                self.ladder_pickup = True
+
+            # Reward for picking up weapon
+            elif np.array_equal(self.state, self.weapon_position):
+              if self.weapon_pickup == False:
+                reward = 5
+                self.weapon_pickup = True
+
+            # Penalty for facing dragon 1 (with/without weapon)
+            elif np.array_equal(self.state, self.dragon_position):
+              if self.weapon_pickup == True:
+                reward = -5
+              else:
+                reward = -30
+
+            # Penalty for facing dragon 2 (with/without weapon)
+            elif np.array_equal(self.state, self.dragon2_position):
+              if self.weapon_pickup == True:
+                reward = -5
+              else:
+                reward = -30
+
+            # Vi
+            # Penalty if the move was invalid (hit the wall)
+            elif np.array_equal(self.state, old_state):
+                reward = -10
+
+            return reward, self.done
+
+
+        # def render(self, mode='human'):
+        #     # Clear the grid and update it with the agent's current position
+        #     self.grid = np.zeros(self.gridsize)
+        #     # Mario
+        #     self.grid[self.state[0], self.state[1]] = 1
+        #     # Princess Peach
+        #     self.grid[self.princess_position[0], self.princess_position[1]] = 2
+
+        #     # Dragon 1,2
+        #     self.grid[self.dragon_position[0], self.dragon_position[1]] = 3
+        #     self.grid[self.ladder_position[0], self.ladder_position[1]] = 4
+
+        #     # Plot the grid
+        #     plt.imshow(self.grid, cmap='Blues', interpolation='nearest')
+        #     #plt.xticks([])
+        #     #plt.yticks([])
+        #     plt.show()
+
+
+        def render_2(self, mode='human'):
+            # Print current state on console
+            for r in range(self.gridsize[0]):
+                for c in range(self.gridsize[1]):
+                    if ([r, c] == [self.state[0], self.state[1]]):
+                        print(GridTile.Mario, end=' ')
+                    elif ([r,c] == [self.ladder_position[0],self.ladder_position[1]]):
+                        print(GridTile.Ladder, end=' ')
+                    elif ([r,c] == [self.weapon_position[0],self.weapon_position[1]]):
+                        print(GridTile.Weapon, end=' ')
+                    elif ([r,c] == [self.dragon_position[0], self.dragon_position[1]]):
+                        print(GridTile.Dragon, end=' ')
+                    elif ([r,c] == [self.dragon2_position[0], self.dragon2_position[1]]):
+                        print(GridTile.Dragon2, end=' ')
+                    elif ([r,c] == [self.princess_position[0], self.princess_position[1]]):
+                        print(GridTile.Princess, end=' ')
+                    else:
+                        print(GridTile._Floor, end=' ')
+
+                print()
+            print()
+
+    ## 1. Experiment with ϵ-greedy
+
+    ### Q-learning and ϵ-greedy policy
+
+    def greedy_policy(q_table, state):
+      action = np.argmax(q_table[state])
+      return action
+
+
+    def epsilon_greedy_policy(q_table, state, epsilon, grid_width):
+        flat_state = int(state[0]) * grid_width + int(state[1])  # Ensure integer index
+        random_int = random.uniform(0, 1)
+        if random_int < epsilon:
+            #action = env.action_space.sample()
+            action = np.random.choice(env.action_space.n)
+        else:
+            action = np.argmax(q_table[flat_state])
+        return action
+
+    def state_to_index(state, width):
+        return state[0] * width + state[1]
+
+    # Q-learning function
+    def q_learning(env, alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps):
+
+        # Initialize Q-table with shape (36, 4) = (state, action)
+        q_table = np.zeros((env.gridsize[0] * env.gridsize[1], env.action_space.n))
+
+        total_reward = 0
+        # Vi
+        # Create a df to store episode and number of steps
+        df_epsisode = pd.DataFrame(columns=['Episode','Num_steps', 'Reward'])
+
+        for episode in range(episodes):
+            #epsilon = min_epsilon + (epsilon- min_epsilon)*np.exp(-epsilon_decay*episodes)
+            epsilon = max(min_epsilon, epsilon * epsilon_decay)
+
+
+            state = env.reset()
+
+            # Convert state to index
+            state_index = state_to_index(state, env.gridsize[1])
+
+            #print(state)
+            done = False
+
+            # Vi
+            num_step = 0
+            reward_per_episode = 0
+            print("--- Episode",episode,"---")
+            # Sultana
+            while not done and num_step <max_steps:
+
+                # Choose action based on epsilon-greedy strategy
+                action = epsilon_greedy_policy(q_table, state, epsilon, env.gridsize[1])
+
+                # Take the action and observe the result
+                next_state, reward, done = env.step(action)
+
+                # Convert next state to index
+                next_state_index = state_to_index(next_state, env.gridsize[1])
+
+                # Update Q-table based on the Q-learning formula
+                q_table[state_index, action] += alpha * (reward + gamma * np.max(q_table[next_state_index]) - q_table[state_index, action])
+
+                # Move to the next state
+                state = next_state
+                # Update the state index
+                state_index = next_state_index
+                #env.render_2()
+
+                # Add up reward
+                total_reward +=reward
+
+                # Track number of steps
+                num_step = num_step+1
+                # Track reward per episode
+
+                reward_per_episode += reward
+
+
+            #epsilon = max(min_epsilon, epsilon * epsilon_decay)
+            new_track = {'Episode':episode, 'Num_steps':num_step, 'Reward':reward_per_episode}
+            df_epsisode.loc[len(df_epsisode)] = new_track
+            print("--reward:", reward)
+            print ('***epsilon:', epsilon)
+
+            # Decay epsilon to reduce exploration over time
+
+
+
+        return q_table, total_reward, df_epsisode
+
+    ### Run Q-learning
+
+    #### Test Environment
+
+    # Hyperparameters of Q-learning
+    alpha=0.5
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.999
+    min_epsilon = 0.05
+    episodes=1500
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_steps_1 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    success=0
+    for i in range (len(df_episode_steps_1['Episode'].values)):
+      if df_episode_steps_1['Reward'].values[i] > 29:
+        success +=1
+
+    print('Successful episodes:',success)
+
+    # Q-values dataframe for 36 states (6x6 grid position) and 4 actions (up, down, left, right)
+    Q_values=pd.DataFrame(q_table, columns=['up', 'down', 'left', 'right'])
+    Q_values
+
+    df_episode_steps_1['Reward'][50:60]
+
+    # Convert Rewards/episode to series
+    rewards_series=pd.Series(df_episode_steps_1['Reward'].values, name="Reward")
+
+    steps_series=pd.Series(df_episode_steps_1['Num_steps'].values, name="Step")
+
+    rewards_series[0:6]
+
+    #### Plot of Rewards and rolling average per episode
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = rewards_series.plot(ax=axes, label="Rewards")
+    _ = (rewards_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Rewards")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning - Rewards vs. Episodes")
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(df_episode_steps_1['Episode'], rewards_series)
+    plt.title('Q-Learning Performance - Rewards vs. Episodes')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    #### Plot of Steps and rolling average per episode
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = steps_series.plot(ax=axes, label="Steps", color='crimson')
+    _ = (steps_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Steps")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(df_episode_steps_1['Episode'], steps_series, color='crimson')
+    plt.title('Q-Learning Performance - Steps vs. Episodes')
+    plt.xlabel('Episode')
+    plt.ylabel('Steps')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    #### Random Search: Best Parameters - Tuning
+
+    import random
+    min_epsilon=0.05
+    max_steps=300
+
+    def random_search_q_learning(env, param_grid, num_samples=80):
+        # Store the best parameters and performance
+        best_params = None
+        best_performance = float('-inf')
+
+        # Randomly sample from the hyperparameter grid
+        for _ in range(num_samples):
+            # Randomly sample values for each hyperparameter
+            alpha = random.choice(param_grid['alpha'])
+            gamma = random.choice(param_grid['gamma'])
+            epsilon = random.choice(param_grid['epsilon'])
+            epsilon_decay = random.choice(param_grid['epsilon_decay'])
+            episodes = random.choice(param_grid['episodes'])
+
+            # Initialize total reward tracker
+            total_reward = 0
+
+            # Call Q-learning function with the current set of hyperparameters
+            #print(f"Running random search with: alpha={alpha}, gamma={gamma}, epsilon={epsilon}, epsilon_decay={epsilon_decay}, episodes={episodes}")
+            q_table, total_reward, df_episode = q_learning(env, alpha, gamma, epsilon, epsilon_decay, min_epsilon,max_steps, episodes)
+
+            average_rewards = np.mean(df_episode['Reward'].values[-500:])
+
+            # Record the best performance
+            if average_rewards > best_performance:
+                best_performance = average_rewards
+                best_params = {'alpha': alpha, 'gamma': gamma, 'epsilon': epsilon, 'epsilon_decay': epsilon_decay, 'episodes': episodes}
+
+        return best_params, best_performance
+
+    # Define the hyperparameter grid (ranges for each hyperparameter)
+    param_grid = {
+        'alpha': [0.1, 0.4, 0.7, 0.9],  # Learning rate
+        'gamma': [0.4, 0.8, 0.9, 0.99],  # Discount factor
+        'epsilon': [0.1,  0.5, 0.9, 1.0],  # Initial epsilon
+        'epsilon_decay': [0.9, 0.99, 0.999, 0.9999],  # Decay factor for epsilon
+        'episodes': [500, 1000, 1500],  # Number of episodes to run
+    }
+
+
+    # Perform random search
+    best_params, best_performance = random_search_q_learning(env, param_grid, num_samples=80)
+
+    # Output the results
+    print(f"Best parameters: {best_params}")
+    print(f"Best performance: {best_performance}")
+
+    # Hyperparameters of Q-learning
+    alpha=0.2
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Convert Rewards/episode to series
+    rewards_series=pd.Series(df_episode['Reward'].values, name="Reward")
+    steps_series=pd.Series(df_episode['Num_steps'].values, name="Step")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series.plot(ax=ax, label="Rewards")
+    _ = (rewards_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=ax))
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series.plot(ax=ax, label="Steps")
+    _ = (steps_series.rolling(window=5) .mean().rename("Rolling Average").plot(ax=ax))
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    #### Test of different Alpha values
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode1 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.4
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode2 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.7
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode3 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.9
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode4 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="α=0.1", color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="α=0.4", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="α=0.7", color='skyblue')
+    _ = rewards_series3.plot(ax=ax, alpha=0.25, label="α=0.9", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, alpha=0.3, label="α=0.1", color='purple')
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="α=0.4", color='orange')
+    _ = steps_series3.plot(ax=ax, label="α=0.7", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha=0.25, label="α=0.9", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Steps vs. Episodes")
+
+    #### Test of different Gamma values
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.4
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode1 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.8
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode2 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode3 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.99
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode4 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, label="ɣ=0.4", color='purple', alpha=0.3)
+    _ = rewards_series2.plot(ax=ax,alpha=0.6, label="ɣ=0.8", color='orange')
+    _ = rewards_series3.plot(ax=ax,label="ɣ=0.9", color='skyblue')
+    _ = rewards_series4.plot(ax=ax, alpha =0.25, label="ɣ=0.99", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.25)
+    ax.plot(rewards_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, label="ɣ=0.4", color='purple', alpha=0.3)
+    _ = steps_series2.plot(ax=ax, label="ɣ=0.8", color='orange', alpha=0.6)
+    _ = steps_series3.plot(ax=ax, label="ɣ=0.9", color='skyblue')
+    _ = steps_series4.plot(ax=ax, label="ɣ=0.99", alpha=0.25, color='green')
+
+
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    #### Test of different epsilon decay values
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.900
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode1 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.3
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.990
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode2 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.999
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode3 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.9999
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode4 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="ε-decay=0.900",  color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="ε-decay=0.990", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="ε-decay=0.999", color='skyblue')
+    _ = rewards_series4.plot(ax=ax,label="ε=0.9999", color='green', alpha=0.25)
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.25)
+    ax.plot(rewards_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, label="ε-decay=0.900", color='purple', alpha=0.3)
+    _ = steps_series2.plot(ax=ax, label="ε-decay=0.990",  color='orange')
+    _ = steps_series3.plot(ax=ax, label="ε-decay=0.999",  color='skyblue')
+    _ = steps_series4.plot(ax=ax,label="ε=0.9999", color='green', alpha =0.25)
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning Performance - Steps vs. Episodes")
+
+Test of different epsilons values
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 0.1
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode1 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 0.5
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode2 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 0.9
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode3 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    alpha=0.1
+    gamma=0.9
+    epsilon = 1.0
+    epsilon_decay=0.995
+    min_epsilon = 0.05
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode4 = q_learning(env,alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, label="ε=0.1", color='purple', alpha=0.3)
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="ε=0.5", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="ε=0.9", color='skyblue')
+    _ = rewards_series4.plot(ax=ax, alpha =0.25, label="ε=1.0", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, label="ε=0.1", color='purple', alpha=0.3)
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="ε=0.5", color='orange')
+    _ = steps_series3.plot(ax=ax, label="ε=0.9", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha =0.25, label="ε=1.0", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    ## 2. Experiment with Softmax policy
+
+    #### Q-learning and softmax policy
+
+    def softmax(q_table, state_index, temperature):
+        q_value = q_table[state_index]
+        q_value = np.array(q_value)
+        max_q = np.max(q_value)
+        exp_q = np.exp((q_value - max_q) / temperature)
+        probability = exp_q / np.sum(exp_q)
+        action = np.random.choice(len(q_value), p=probability)
+        return action
+
+    # Q-learning with Softmax policy
+
+    def state_to_index(state, width):
+        return state[0] * width + state[1]
+
+    # Q-learning function
+    def q_learning(env, alpha, gamma, temperature, min_temperature, temperature_decay, episodes,max_steps):
+
+        # Initialize Q-table with shape (36, 4) = (state, action)
+        q_table = np.zeros((env.gridsize[0] * env.gridsize[1], env.action_space.n))
+
+        # Vi
+        # Create a df to store episode and number of steps
+        df_epsisode = pd.DataFrame(columns=['Episode','Num_steps', 'Reward'])
+        total_reward = 0
+
+        # Sultana
+        for episode in range(episodes):
+
+            # Update temperature
+            # Decay temperature to reduce exploration over time
+            temperature = max(min_temperature, temperature * temperature_decay)
+
+            state = env.reset()
+            # Convert state to index
+            state_index = state_to_index(state, env.gridsize[1])
+            done = False
+
+            # Vi
+            num_step = 0
+            reward_per_episode = 0
+            print("--- Episode",episode,"---")
+
+            while not done and num_step <max_steps:
+
+                # Choose action based on sotfmax policy
+                action = softmax(q_table, state_index, temperature)
+                # Take the action and observe the result
+                next_state, reward, done = env.step(action)
+
+                # Convert next state to index
+                next_state_index = state_to_index(next_state, env.gridsize[1])
+
+                # Update Q-table based on the Q-learning formula
+                q_table[state_index, action] += alpha * (reward + gamma * np.max(q_table[next_state_index]) - q_table[state_index, action])
+
+                # Move to the next state
+                state = next_state
+                # Update the state index
+                state_index = next_state_index
+                #env.render_2()
+
+                # Add up reward
+                total_reward +=reward
+
+                # Track number of steps
+                num_step = num_step+1
+                # Track reward per episode
+
+                reward_per_episode += reward
+
+            print("--reward:", reward)
+            print('***temperature:', temperature)
+
+            new_track = {'Episode':episode, 'Num_steps':num_step, 'Reward':reward_per_episode}
+            df_epsisode.loc[len(df_epsisode)] = new_track
+
+        return q_table, total_reward, df_epsisode
+
+    #### Run Q-learning
+
+    temperature = 1.0
+    min_temperature = 0.01
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.9
+    episodes=1000
+    total_reward = 0
+    max_steps=500
+
+    if __name__ == "__main__":
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset()
+        # Show the environment
+        q_table, total_reward, df_episode_soft = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print()
+        print(episodes)
+        print(q_table)
+
+    success=0
+    for i in range (len(df_episode_soft['Episode'].values)):
+      if df_episode_soft['Reward'].values[i] > 29:
+        success +=1
+
+    print('Successful episodes:',success)
+
+    rewards_series=pd.Series(df_episode_soft['Reward'].values, name="Reward")
+    steps_series=pd.Series(df_episode_soft['Num_steps'].values, name="Step")
+
+    #### Plot of Rewards vs. Episodes
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = rewards_series.plot(ax=axes, label="Rewards")
+    _ = (rewards_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Rewards")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning Performance - Rewards vs. Episodes")
+
+    #### Plot of Steps vs. Episodes
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = steps_series.plot(ax=axes, label="Steps", color='crimson')
+    _ = (steps_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Steps")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    #### Random Search: Best parameter
+
+    import random
+    min_temperature=0.001
+    max_steps=500
+
+    def random_search_q_learning(env, param_grid, num_samples=80):
+        best_params = None
+        best_performance = float('-inf')
+
+        for _ in range(num_samples):
+            alpha = random.choice(param_grid['alpha'])
+            gamma = random.choice(param_grid['gamma'])
+            temperature = random.choice(param_grid['temperature'])
+            temperature_decay = random.choice(param_grid['temperature_decay'])
+            episodes = random.choice(param_grid['episodes'])
+
+            total_reward = 0
+
+            q_table, total_reward, df_episode = q_learning(env, alpha, gamma, temperature, min_temperature, temperature_decay, episodes, max_steps)
+
+            average_rewards = np.mean(df_episode['Reward'].values[-500:])
+
+            if average_rewards > best_performance:
+                best_performance = average_rewards
+                best_params = {'alpha': alpha, 'gamma': gamma, 'temperature': temperature, 'temperature_decay': temperature_decay, 'episodes': episodes}
+
+        return best_params, best_performance
+
+    # Define the hyperparameter grid (ranges for each hyperparameter)
+    param_grid = {
+        'alpha': [0.1, 0.4, 0.7, 0.9],  # Learning rate
+        'gamma': [0.4, 0.8, 0.9, 0.99],  # Discount factor
+        'temperature': [0.1, 0.5, 1.0, 4.0],  # Initial temperature
+        'temperature_decay': [0.5, 0.8, 0.9, 0.99],  # Decay factor for temperature
+        'episodes': [500, 1000, 1500],  # Number of episodes to run
+    }
+
+
+    # Perform random search
+    best_params, best_performance = random_search_q_learning(env, param_grid, num_samples=80)
+
+    # Output the results
+    print(f"Best parameters: {best_params}")
+    print(f"Best performance: {best_performance}")
+
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.1
+    gamma=0.9
+    episodes=1500
+    total_reward = 0
+    max_steps=300
+
+    if __name__ == "__main__":
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset()
+        # Show the environment
+        q_table, total_reward, df_episode_soft = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print()
+        print(episodes)
+        print(q_table)
+
+    rewards_series=pd.Series(df_episode_soft['Reward'].values, name="Reward")
+    steps_series=pd.Series(df_episode_soft['Num_steps'].values, name="Step")
+
+    #### Plot of Rewards and rolling average per episode
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = rewards_series.plot(ax=axes, label="Rewards")
+    _ = (rewards_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Rewards")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning - Rewards vs. Episodes")
+
+    #### Plot of Steps and rolling average per episode
+    fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+    _ = steps_series.plot(ax=axes, label="Steps", color='crimson')
+    _ = (steps_series.rolling(window=5).mean().rename("Rolling Average").plot(ax=axes))
+    _ = axes.legend()
+    _ = axes.set_ylabel("Steps")
+    _ = axes.set_xlabel("Episode Number")
+    _ = axes.set_title("Q-learning Performance - Steps vs. Episodes")
+
+    #### Test of different Alpha values
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft1 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.1
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft2 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.5
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft3 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.8
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft4 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode_soft1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode_soft2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode_soft3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode_soft4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="α=0.05", color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="α=0.1", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="α=0.5", color='skyblue')
+    _ = rewards_series3.plot(ax=ax, alpha=0.25, label="α=0.8", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode_soft1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode_soft2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode_soft3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode_soft4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, alpha=0.3, label="α=0.05", color='purple')
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="α=0.1", color='orange')
+    _ = steps_series3.plot(ax=ax, label="α=0.5", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha=0.25, label="α=0.8", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Steps vs. Episodes")
+
+    #### Test of different Gamma values
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.4
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft1 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft2 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.9
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft3 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.99
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft4 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode_soft1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode_soft2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode_soft3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode_soft4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="ɣ=0.4", color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="ɣ=0.8", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="ɣ=0.9", color='skyblue')
+    _ = rewards_series3.plot(ax=ax, alpha=0.25, label="ɣ=0.99", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode_soft1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode_soft2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode_soft3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode_soft4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, alpha=0.3, label="ɣ=0.4", color='purple')
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="ɣ=0.8", color='orange')
+    _ = steps_series3.plot(ax=ax, label="ɣ=0.9", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha=0.25, label="ɣ=0.99", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Steps vs. Episodes")
+
+    #### Test of different temperature-decay rate
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.5
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft1 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.8
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft2 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.990
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft3 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 0.1
+    min_temperature = 0.01
+    temperature_decay = 0.999
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft4 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode_soft1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode_soft2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode_soft3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode_soft4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="τ-decay=0.5", color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="τ-decay=0.8", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="τ-decay=0.99", color='skyblue')
+    _ = rewards_series3.plot(ax=ax, alpha=0.25, label="τ-decay=0.999", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode_soft1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode_soft2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode_soft3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode_soft4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, alpha=0.3, label="τ-decay=0.5", color='purple')
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="τ-decay=0.8", color='orange')
+    _ = steps_series3.plot(ax=ax, label="τ-decay=0.99", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha=0.25, label="τ-decay=0.999", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Steps vs. Episodes")
+
+    #### Test of different temperature values
+
+    # Hyperparameters of Q-learning
+    temperature = 0.1
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft1 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 0.5
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft2 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 1.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft3 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    # Hyperparameters of Q-learning
+    temperature = 4.0
+    min_temperature = 0.001
+    temperature_decay = 0.995
+    alpha=0.05
+    gamma=0.8
+    episodes=1000
+    max_steps=500
+
+    total_reward = 0
+
+    if __name__ == "__main__":
+        # Call Mario-grid environment
+        env = gridEnv()
+        # Start with new environment
+        state = env.reset(seed=42)
+        # Vi
+        q_table, total_reward, df_episode_soft4 = q_learning(env,alpha, gamma, temperature, min_temperature, temperature_decay , episodes, max_steps)
+        print("Trained Q-Table:", q_table, '\n total reward: ', total_reward)
+
+    rewards_series1=pd.Series(df_episode_soft1['Reward'].values, name="Reward")
+    rewards_series2=pd.Series(df_episode_soft2['Reward'].values, name="Reward")
+    rewards_series3=pd.Series(df_episode_soft3['Reward'].values, name="Reward")
+    rewards_series4=pd.Series(df_episode_soft4['Reward'].values, name="Reward")
+
+    ######## Plot of Rewards and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = rewards_series1.plot(ax=ax, alpha=0.3, label="τ=0.1", color='purple')
+    _ = rewards_series2.plot(ax=ax,alpha=0.75, label="τ=0.5", color='orange')
+    _ = rewards_series3.plot(ax=ax, label="τ=1.0", color='skyblue')
+    _ = rewards_series3.plot(ax=ax, alpha=0.25, label="τ=4.0", color='green')
+
+    ax.plot(rewards_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(rewards_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(rewards_series3.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Rewards")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Rewards vs. Episodes")
+
+    steps_series1=pd.Series(df_episode_soft1['Num_steps'].values, name="Step")
+    steps_series2=pd.Series(df_episode_soft2['Num_steps'].values, name="Step")
+    steps_series3=pd.Series(df_episode_soft3['Num_steps'].values, name="Step")
+    steps_series4=pd.Series(df_episode_soft4['Num_steps'].values, name="Step")
+
+    ######## Plot of Steps and rolling average per episode ########
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5), sharex=True, sharey=True)
+    _ = steps_series1.plot(ax=ax, alpha=0.3, label="τ=0.1", color='purple')
+    _ = steps_series2.plot(ax=ax,alpha=0.75, label="τ=0.5", color='orange')
+    _ = steps_series3.plot(ax=ax, label="τ=1.0", color='skyblue')
+    _ = steps_series4.plot(ax=ax, alpha=0.25, label="τ=4.0", color='green')
+
+    ax.plot(steps_series1.rolling(window=5).mean(), color='purple', alpha=0.5)
+    ax.plot(steps_series2.rolling(window=5).mean(), color='orange')
+    ax.plot(steps_series3.rolling(window=5).mean(), color='blue', alpha=0.4)
+    ax.plot(steps_series4.rolling(window=5).mean(), color='green', alpha=0.5)
+
+    _ = ax.legend()
+    _ = ax.set_ylabel("Steps")
+    _ = ax.set_xlabel("Episode Number")
+    _ = ax.set_title("Q-learning - Steps vs. Episodes")
+
+    ## Optuna test
+
+    #pip install optuna
+    # import optuna
+    # from optuna.trial import TrialState
+
+    # # Optuna objective function
+    # def objective(trial):
+    #   # Hyperparameters to tune
+    #   alpha = trial.suggest_int('alpha', 0.01, 0.9)
+    #   gamma = trial.suggest_int('gamma', 0.8, 0.99)
+    #   epsilon = trial.suggest_int('epsilon', 0.4, 1.0)
+    #   epsilon_decay = trial.suggest_int('epsilon_decay', 0.8, 0.9999)
+
+    #   # Initialize total reward tracker
+    #   total_reward = 0
+
+    #   # Call Q-learning function with the current set of hyperparameters
+    #   q_table, total_reward, df_episode = q_learning(env, alpha, gamma, epsilon, epsilon_decay, min_epsilon, episodes, max_steps)
+    # study = optuna.create_study(direction='maximize')
+    # study.optimize(objective, n_trials=30, n_jobs=-1)
+    # q_trials = study.trials_dataframe()
+    # q_trials.head()
+    # print("Best Hyperparameters:", study.best_params)

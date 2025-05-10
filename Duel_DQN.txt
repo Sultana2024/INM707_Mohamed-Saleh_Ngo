@@ -1,0 +1,133 @@
+# Dueling DQN network
+class DuelingDQN(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super(DuelingDQN, self).__init__()
+        self.feature = nn.Sequential(
+            nn.Linear(state_dim, 16),
+            nn.ReLU()
+        )
+        self.value_stream = nn.Sequential(
+            nn.Linear(16, 8),
+            nn.ReLU(),
+            nn.Linear(8, 1)
+        )
+        self.advantage_stream = nn.Sequential(
+            nn.Linear(16, 8),
+            nn.ReLU(),
+            nn.Linear(8, action_dim)
+        )
+
+    def forward(self, x):
+        features = self.feature(x)
+        values = self.value_stream(features)
+        advantages = self.advantage_stream(features)
+        return values + (advantages - advantages.mean(dim=1, keepdim=True))
+
+# Setup
+env = gym.make("MountainCar-v0")
+state_dim = env.observation_space.shape[0]
+action_dim = env.action_space.n
+
+q_net = DuelingDQN(state_dim, action_dim)
+target_q_net = DuelingDQN(state_dim, action_dim)
+target_q_net.load_state_dict(q_net.state_dict())
+optimizer = optim.Adam(q_net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+
+replay_buffer = deque(maxlen=100000)
+
+# Training function
+def train():
+    if len(replay_buffer) < batch_size:
+        return
+    # Sample training batch from replay buffer
+    batch = random.sample(replay_buffer, batch_size)
+    # Unpacking batch
+    states, actions, rewards, next_states, dones = zip(*batch)
+    # Convert states, actions, rewards, next_states, dones into torch tensor type
+    states = torch.tensor([np.array(s, dtype=np.float32) for s in states], dtype=torch.float32)
+    actions = torch.tensor(actions).unsqueeze(1)
+    rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)
+    next_states = torch.tensor([np.array(s, dtype=np.float32) for s in next_states], dtype=torch.float32)
+    dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1)
+
+    q_values = q_net(states).gather(1, actions)
+    with torch.no_grad():
+        max_next_q = target_q_net(next_states).max(1, keepdim=True)[0]
+        q_targets = rewards + (1 - dones) * gamma * max_next_q
+
+    loss = nn.MSELoss()(q_values, q_targets)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+# Hyperparameters
+gamma = 0.99
+epsilon = 1.0
+epsilon_decay = 0.995
+epsilon_min = 0.1
+batch_size = 32
+target_update_freq = 100
+
+# Main training loop
+# Create a df to store episode and number of steps
+df_epsisode = pd.DataFrame(columns=['Episode','Num_steps', 'Reward'])
+
+for episode in range(10000):
+    state, _ = env.reset()
+    done = False
+    total_reward = 0
+    num_step = 0
+    reward_per_episode = 0
+    while not done:
+        if random.random() < epsilon:
+            action = env.action_space.sample()
+        else:
+            with torch.no_grad():
+                action = q_net(torch.tensor([state], dtype=torch.float32)).argmax().item()
+
+        next_state, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+
+        # Store to replay buffer
+        replay_buffer.append((state, action, reward, next_state, done))
+        state = next_state
+        total_reward += reward
+        # Track number of steps
+        num_step = num_step+1
+        # Track reward per episode
+        reward_per_episode += reward
+
+        train()
+
+    new_track = {'Episode':episode, 'Num_steps':num_step, 'Reward':reward_per_episode}
+    df_epsisode.loc[len(df_epsisode)] = new_track
+
+    max_buffer_size = 10000
+    if len(replay_buffer) > max_buffer_size:
+        replay_buffer.popleft()  # Remove oldest experience
+
+    if epsilon > epsilon_min:
+        epsilon = max(epsilon_min, epsilon * epsilon_decay)
+
+    if episode % target_update_freq == 0:
+        target_q_net.load_state_dict(q_net.state_dict())
+
+    if episode % 100 == 0:
+      print(f"Episode {episode}, Reward: {total_reward:.1f}, Epsilon: {epsilon:.3f}")
+
+env.close()
+
+# Plot score over episodes
+double_dqn_scores_series = pd.Series(df_epsisode['Reward'], name="scores")
+
+fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharex=True, sharey=True)
+_ = double_dqn_scores_series.plot(ax=axes, label="Dueling DQN Scores")
+_ = (double_dqn_scores_series.rolling(window=100)
+                      .mean()
+                      .rename("Rolling Average")
+                      .plot(ax=axes))
+_ = axes.legend()
+_ = axes.set_ylabel("Score")
+_ = axes.set_xlabel("Episode Number")
+_ = axes.set_title("Dueling DQN Scores with γ=0.99, ε-decay_rate=0.995, ε_min=0.1,\n"
+                  "batch_size=32, target_update_freq=100, num_neurons_in=16->8->__")

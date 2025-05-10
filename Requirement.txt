@@ -1,0 +1,4 @@
+#Libraries: 
+gym==0.26.2
+tensorflow 
+torch 

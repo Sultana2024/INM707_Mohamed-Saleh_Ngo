@@ -9,12 +9,14 @@ ________________________________________________________________________________
 **Basic Tasks**
 
 * Env_Q is the code for the environment and Q-learning experiments with different variables and policies.
-* Download and run this notebook for tasks 1 to 6 
+* Download and run this notebook for tasks 1 to 6.
 
 **Advanced Tasks**
 
-* **Double_DQN** – the code for the Double DQN implementation and both experiments for tasks 7 to 8
+* **Double_DQN** – the code for the Double DQN implementation and both experiments for tasks 7 to 8.
 
-* **Duel_DQN** – the code for Dueling DQN implementation and both experiments for tasks 7 to 8
+* **Duel_DQN** – the code for Dueling DQN implementation and both experiments for tasks 7 to 8.
 
-* The Text_file_codes folder contains the text file version of the codes. 
+* The Text_file_codes folder contains the text file version of the codes.
+
+* **Individual Folders**  – contain the notebooks and libraries required for the individual tasks 9 to 11. 
